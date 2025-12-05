@@ -1,0 +1,911 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>個人學習課綱規劃 App</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+    <style>
+        /* 基礎樣式 */
+        .calendar-grid {
+            display: grid;
+            grid-template-columns: repeat(7, minmax(0, 1fr));
+            gap: 1px;
+            border-left: 1px solid #e5e7eb;
+            border-top: 1px solid #e5e7eb;
+        }
+        .day-cell {
+            min-height: 120px;
+            border-right: 1px solid #e5e7eb;
+            border-bottom: 1px solid #e5e7eb;
+            @apply p-2 transition duration-150 ease-in-out;
+        }
+        /* 標示「今天」的單元格 */
+        .is-today {
+            @apply ring-2 ring-indigo-500 ring-offset-2 bg-indigo-50/50; 
+        }
+        .day-cell:hover {
+            @apply bg-gray-50;
+        }
+        /* 進度條樣式 */
+        .progress-bar-container {
+            @apply w-full bg-gray-200 rounded-full h-1.5 dark:bg-gray-700 mt-1;
+        }
+        /* 變更進度條顏色為綠色，代表「完成」 */
+        .progress-bar {
+            @apply h-1.5 rounded-full bg-green-500; 
+        }
+    </style>
+</head>
+<body>
+
+<div id="app" class="flex h-screen bg-gray-100">
+
+    <aside class="w-64 bg-white shadow-xl flex-shrink-0 overflow-y-auto">
+        <div class="p-6 border-b">
+            <h1 class="text-2xl font-bold text-indigo-600">🧠 學習課綱</h1>
+            <p class="text-sm text-gray-500 mt-1">Personal Curriculum Planner</p>
+        </div>
+        
+        <div class="p-4">
+            <h2 class="text-lg font-semibold text-gray-700 mb-3 border-b pb-2 flex justify-between items-center">
+                <span>📂 六大課程</span>
+                </h2>
+            <ul>
+                <li v-for="course in courses" :key="course.id" 
+                    :class="['p-3 rounded-lg mb-2 flex flex-col transition duration-150', activeCourse === course.id ? 'bg-indigo-50 border-l-4 border-indigo-600 font-medium text-indigo-700' : 'text-gray-600 hover:bg-gray-50']">
+                    
+                    <div class="flex justify-between items-start w-full">
+                        <span @click="activeCourse = course.id" class="cursor-pointer flex-grow">{{ course.icon }} {{ course.name }}</span>
+                        
+                        <button @click.stop="editCourseName(course)" class="ml-2 text-gray-400 hover:text-indigo-600 transition">
+                            ✏️
+                        </button>
+                    </div>
+                    
+                    <p class="text-xs text-gray-500 mt-1 italic" @click="activeCourse = course.id">
+                        目標：{{ course.goal || '尚未設定' }}
+                    </p>
+
+                    <div class="flex justify-between items-center w-full mt-1" @click="activeCourse = course.id">
+                        <span :class="['text-xs px-2 py-0.5 rounded-full', courseScheduleCounts[course.id].totalScheduledCount > 0 ? 'bg-indigo-200 text-indigo-800' : 'bg-gray-200 text-gray-700']">
+                            {{ courseScheduleCounts[course.id].completedCount }} / {{ courseScheduleCounts[course.id].totalScheduledCount }}
+                        </span>
+                    </div>
+
+                    <div class="progress-bar-container mt-1">
+                        <div class="progress-bar" :style="{ width: courseScheduleCounts[course.id].percentage + '%' }"></div>
+                    </div>
+                    
+                    <p v-if="courseScheduleCounts[course.id].totalScheduledCount > 0" class="text-xs text-gray-500 mt-1 self-end">
+                        本月已完成 {{ courseScheduleCounts[course.id].completedCount }} / {{ courseScheduleCounts[course.id].totalScheduledCount }} 次排程 ({{ courseScheduleCounts[course.id].percentage.toFixed(0) }}%)
+                    </p>
+                    <p v-else class="text-xs text-gray-500 mt-1 self-end">
+                        本月尚無排程
+                    </p>
+
+                </li>
+            </ul>
+        </div>
+    </aside>
+
+    <main class="flex-grow overflow-y-auto p-8">
+        <div class="flex justify-between items-center mb-6">
+            <h2 class="text-3xl font-bold text-gray-800">
+                📅 學習行事曆規劃
+            </h2>
+            <div class="flex items-center space-x-3">
+                <button @click="changeMonth(-1)" class="p-2 rounded-full bg-white shadow hover:bg-gray-100 transition">← 上個月</button>
+                <span class="text-lg font-normal text-indigo-600">{{ currentMonthDisplay }}</span>
+                <button @click="changeMonth(1)" class="p-2 rounded-full bg-white shadow hover:bg-gray-100 transition">下個月 →</button>
+                
+                <button @click="exportCoursesJson" class="py-2 px-4 bg-gray-500 text-white rounded-md hover:bg-gray-600 transition">
+                    📥 匯出課程數據 (JSON)
+                </button>
+                <button @click="exportToCSV" class="py-2 px-4 bg-green-500 text-white rounded-md hover:bg-green-600 transition">
+                    📥 匯出排程 (CSV)
+                </button>
+            </div>
+        </div>
+        
+        <div class="bg-white p-4 rounded-xl shadow mb-6">
+            <h3 class="text-xl font-semibold mb-3 text-gray-800 flex justify-between items-center">
+                <span>📋 {{ currentCourse.name }}：子項目清單</span>
+                <button @click="openSubItemModal({ courseId: activeCourse })" class="text-sm py-1 px-3 bg-indigo-500 text-white rounded-md hover:bg-indigo-600 transition">
+                    + 新增子項目
+                </button>
+            </h3>
+            <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                <div v-for="item in currentCourse.subItems" :key="item.id" 
+                    :class="['p-3 rounded-lg shadow-sm border transition-shadow hover:shadow-md cursor-pointer', statusColor(item.status).bg, statusColor(item.status).border]"
+                    @click="openSubItemModal(item)"> 
+                    <p class="font-medium">{{ item.title }}</p>
+                    <p :class="['text-xs mt-1', statusColor(item.status).text]">{{ item.status }}</p>
+                    <button @click.stop="openScheduleModal(item)" class="text-xs mt-2 text-indigo-600 hover:text-indigo-800">
+                        點擊排程到行事曆 →
+                    </button>
+                </div>
+            </div>
+        </div>
+
+        <div class="bg-white rounded-xl shadow-lg">
+            <div class="calendar-grid font-bold text-center text-gray-600 bg-gray-50">
+                <div class="p-2">日</div>
+                <div class="p-2">一</div>
+                <div class="p-2">二</div>
+                <div class="p-2">三</div>
+                <div class="p-2">四</div>
+                <div class="p-2">五</div>
+                <div class="p-2">六</div>
+            </div>
+            
+            <div class="calendar-grid">
+                <div v-for="day in daysInMonth" :key="day.date" 
+                    :class="['day-cell relative', day.isCurrentMonth ? 'bg-white' : 'bg-gray-50 text-gray-400', {'is-today': day.isToday}]"
+                    @drop="handleDrop($event, day.date)"
+                    @dragover.prevent>
+                    
+                    <span class="text-sm font-semibold" :class="{'text-indigo-600': day.isToday}">{{ day.dayNum }}</span>
+                    
+                    <div v-if="scheduledItems[day.date] && scheduledItems[day.date].length > 0">
+                        <div v-for="(schedule, index) in scheduledItems[day.date]" :key="index" 
+                            :class="['mt-1 px-1 py-0.5 rounded-md text-xs truncate cursor-pointer', statusColor(schedule.status).bg, statusColor(schedule.status).text]">
+                            <span class="font-medium">{{ schedule.eventTitle }}</span>
+                            <div class="absolute inset-0" @click="openRecordModal(schedule, day.date)"></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </main>
+    
+    <div v-if="isScheduleModalOpen" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-20">
+        <div class="bg-white p-6 rounded-lg shadow-2xl w-full max-w-md">
+            <h3 class="text-xl font-bold mb-4">排程規劃：{{ schedulingItem.title }}</h3>
+            
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-indigo-700">選擇 **具體** 行事曆事件</label>
+                <select v-model="scheduleEventTitle" class="mt-1 block w-full p-2 border border-gray-300 rounded-md">
+                    <option v-for="(event, index) in schedulingItem.events" :key="index">{{ event }}</option>
+                </select>
+            </div>
+            
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700">選擇 **起始** 日期</label>
+                <input type="date" v-model="scheduleDate" class="mt-1 block w-full p-2 border border-gray-300 rounded-md">
+            </div>
+
+            <div class="mb-6">
+                <label class="block text-sm font-medium text-gray-700 mb-2">重複頻率</label>
+                <div class="flex space-x-4">
+                    <label class="flex items-center">
+                        <input type="radio" v-model="scheduleRecurrence" value="once" class="form-radio text-indigo-600">
+                        <span class="ml-2 text-gray-700">單次</span>
+                    </label>
+                    <label class="flex items-center">
+                        <input type="radio" v-model="scheduleRecurrence" value="weekly" class="form-radio text-indigo-600">
+                        <span class="ml-2 text-gray-700">每週 (持續 4 週)</span>
+                    </label>
+                </div>
+                <p v-if="scheduleRecurrence === 'weekly'" class="text-xs text-red-500 mt-1">排程將自動建立 4 個本週期的重複事件，直到 2026/3 月底。</p>
+            </div>
+            
+            <div class="flex justify-end space-x-3">
+                <button @click="isScheduleModalOpen = false" class="py-2 px-4 text-gray-600 hover:text-gray-800">取消</button>
+                <button @click="scheduleActivity" class="py-2 px-4 bg-indigo-600 text-white rounded-md hover:bg-indigo-700">確認排程</button>
+            </div>
+        </div>
+    </div>
+    
+    <div v-if="isRecordModalOpen" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-20">
+        <div class="bg-white p-6 rounded-lg shadow-2xl w-full max-w-lg">
+            <h3 class="text-xl font-bold mb-4">排程紀錄、結果與編輯：({{ recordingDate }})</h3>
+            
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700">所屬子項目</label>
+                <p class="mt-1 text-base font-semibold">{{ recordingItem.title }}</p>
+            </div>
+            
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700">具體事件 (可編輯)</label>
+                <input type="text" v-model="recordingItem.eventTitle" class="mt-1 block w-full p-2 border border-gray-300 rounded-md" placeholder="請輸入具體事件標題">
+            </div>
+            
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700">執行狀況 (狀態更新)</label>
+                <select v-model="recordingItem.status" class="mt-1 block w-full p-2 border border-gray-300 rounded-md">
+                    <option>未開始</option>
+                    <option>進行中</option>
+                    <option>已完成</option>
+                    <option>延期/中斷</option>
+                </select>
+            </div>
+            <div class="mb-6">
+                <label class="block text-sm font-medium text-gray-700">過程與反思紀錄</label>
+                <textarea v-model="recordingItem.notes" rows="4" placeholder="記錄今日學習了什麼、遇到的困難、或取得的成果。" class="mt-1 block w-full p-2 border border-gray-300 rounded-md"></textarea>
+            </div>
+            <div class="flex justify-between items-center pt-3 border-t">
+                <button @click="deleteSchedule" class="py-2 px-4 bg-red-600 text-white rounded-md hover:bg-red-700 transition">
+                    🗑️ 刪除行程
+                </button>
+                <div class="flex space-x-3">
+                    <button @click="isRecordModalOpen = false" class="py-2 px-4 text-gray-600 hover:text-gray-800">關閉</button>
+                    <button @click="saveRecord" class="py-2 px-4 bg-green-600 text-white rounded-md hover:bg-green-700">儲存紀錄</button>
+                </div>
+            </div>
+        </div>
+    </div>
+    
+    <div v-if="isSubItemModalOpen" class="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-20">
+        <div class="bg-white p-6 rounded-lg shadow-2xl w-full max-w-lg">
+            <h3 class="text-xl font-bold mb-4">{{ editingSubItem.id ? '編輯子項目' : '新增子項目' }}</h3>
+            
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700">子項目標題 (例如：冒牌者焦慮調節)</label>
+                <input type="text" v-model="editingSubItem.title" class="mt-1 block w-full p-2 border border-gray-300 rounded-md" required>
+            </div>
+            
+            <div class="mb-4">
+                <label class="block text-sm font-medium text-gray-700">目前狀態</label>
+                <select v-model="editingSubItem.status" class="mt-1 block w-full p-2 border border-gray-300 rounded-md">
+                    <option>未開始</option>
+                    <option>進行中</option>
+                    <option>已完成</option>
+                    <option>延期/中斷</option>
+                </select>
+            </div>
+            
+            <div class="mb-6">
+                <label class="block text-sm font-medium text-gray-700">具體事件清單 (每行一個，作為排程選項)</label>
+                <textarea v-model="editingSubItemEventsText" rows="5" class="mt-1 block w-full p-2 border border-gray-300 rounded-md" placeholder="例如：\nCalm App／Headspace 冥想 5 分鐘\n晚間 RESET 反思（寫一句話）"></textarea>
+                <p class="text-xs text-gray-500 mt-1">請注意：這些選項將會成為排程時的具體事件標題。</p>
+            </div>
+            
+            <div class="flex justify-between items-center pt-3 border-t">
+                <button v-if="editingSubItem.id" @click="deleteSubItem" class="py-2 px-4 bg-red-600 text-white rounded-md hover:bg-red-700 transition">
+                    🗑️ 刪除子項目
+                </button>
+                <div class="flex space-x-3 ml-auto">
+                    <button @click="isSubItemModalOpen = false" class="py-2 px-4 text-gray-600 hover:text-gray-800">取消</button>
+                    <button @click="saveSubItem" :disabled="!editingSubItem.title" class="py-2 px-4 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50">
+                        儲存子項目
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+
+</div>
+
+<script>
+    const { createApp, ref, reactive, computed, watch } = Vue
+
+    // --- 日期格式化工具 ---
+    const formatDate = (date) => {
+        const d = new Date(date);
+        let month = '' + (d.getMonth() + 1);
+        let day = '' + d.getDate();
+        let year = d.getFullYear();
+
+        if (month.length < 2) month = '0' + month;
+        if (day.length < 2) day = '0' + day;
+
+        return [year, month, day].join('-');
+    }
+
+    // --- 核心靜態數據 (作為首次載入的預設值) ---
+    // 預設資料中新增了 goal 欄位
+    const DEFAULT_COURSES = [
+        { id: 1, name: '心理成長 × 自信鍛鍊', icon: '🧠', goal: '每週至少 2 次心理練習，提升工作穩定性。', subItems: [
+            { id: 101, title: '冒牌者焦慮調節', status: '未開始', notes: '', events: ['閱讀 Crucial Conversations 第 1 章（10 分鐘）', '做一次「今日焦慮來源 3 問」反思（3 分鐘）', '聽 The Mindset Mentor podcast（任一集，10 分鐘）']},
+            { id: 102, title: '自信肌肉練習', status: '未開始', notes: '', events: ['寫下 2 件今天做得好的事（2 分鐘）', '錄 30 秒正向自我肯定語音（不公開）'] },
+            { id: 103, title: '心理安定練習', status: '未開始', notes: '', events: ['Calm App／Headspace 冥想 5 分鐘', '晚間 RESET 反思（寫一句話）'] },
+        ]},
+        { id: 2, name: 'Finance × AI × Insight 雙軌專業力', icon: '📊', goal: '完成財報基礎閱讀，並在 Power BI 報表上應用 3 個新 DAX 公式。', subItems: [
+            { id: 201, title: '財報 × 財稅補強', status: '未開始', notes: '', events: ['閱讀財報分析書籍《財報就像一本故事書》第 1 章（15 分鐘）', '看一次「政府財政部基礎稅務影片」（YouTube 10 分鐘）', '整理 1 個稅務名詞（例如遞延所得稅）'] },
+            { id: 202, title: '主動式財務分析', status: '未開始', notes: '', events: ['對本週資料做 3 Why 分析（10 分鐘）', '寫一段「如果主管問我這個數字，我會怎麼解釋？」（5 分鐘）'] },
+            { id: 203, title: 'Power BI × AI 實作', status: '未開始', notes: '', events: ['Power BI 自動化練習：新增 1 個計算欄位（15 分鐘）', '用 ChatGPT 生成 Power BI DAX 解釋（10 分鐘）', '整理 Power BI 報表流程（10 分鐘）'] },
+        ]},
+        { id: 3, name: '個人財務 × 開源 × 買房計畫', icon: '💰', goal: '儲蓄率達 60%，並能解釋 3 個房貸名詞。', subItems: [
+            { id: 301, title: '投資習慣', status: '未開始', notes: '', events: ['檢查台股／美股部位（5 分鐘）', '閱讀投資文章 1 篇（5 分鐘）', '紀錄本週投資心得（3 分鐘）'] },
+            { id: 302, title: '開源方向探索', status: '未開始', notes: '', events: ['整理 1 個可變現能力（5 分鐘）', '寫 1 篇知識型內容草稿（10–15 分鐘）'] },
+            { id: 303, title: '買房計畫', status: '未開始', notes: '', events: ['計算本月儲蓄率（5 分鐘）', '試算頭期金需要的時間（10 分鐘）', '研究 1 個房貸名詞（5 分鐘）'] },
+        ]},
+        { id: 4, name: '英語表達 × 國際溝通', icon: '🗣️', goal: '每週能流利使用 5 個外商會議用句。', subItems: [
+            { id: 401, title: '外商英文必備', status: '未開始', notes: '', events: ['學 5 個外商會議用句（10 分鐘）', '閱讀 1 頁英文小說（5 分鐘）'] },
+            { id: 402, title: '表達實戰', status: '未開始', notes: '', events: ['錄 30 秒英文即席回答（不公開）', '做 3 個會議數據英文句型（10 分鐘）'] },
+            { id: 403, title: '沉浸式練習', status: '未開始', notes: '', events: ['看外國 vlog 10 分鐘', 'AmazingTalker 課後寫 recap（5 分鐘）'] },
+        ]},
+        { id: 5, name: '個人品牌 × 副業 Hard Data 內容', icon: '💡', goal: '輸出 2 篇 Hard Data 知識內容草稿，鎖定目標受眾。', subItems: [
+            { id: 501, title: '定位跑版', status: '未開始', notes: '', events: ['寫出 5 個你能分享的 Hard Data 主題（10 分鐘）', '整理外商日常心得 1 則'] },
+            { id: 502, title: '知識型內容創作', status: '未開始', notes: '', events: ['撰寫 1 篇不公開內容（15–20 分鐘）'] },
+            { id: 503, title: '資訊差變現探索', status: '未開始', notes: '', events: ['觀察 1 個可以做成資訊產品的主題（10 分鐘）', '整理 1 個你能教別人的流程（10 分鐘）'] },
+        ]},
+        { id: 6, name: '生活體驗 × 靈感 × 美感探索', icon: '🧘', goal: '每月完成 1 項新體驗，並紀錄 3 則生活靈感。', subItems: [
+            { id: 601, title: '每月新體驗', status: '未開始', notes: '', events: ['安排這個月的體驗活動（10 分鐘）'] },
+            { id: 602, title: '靈感紀錄', status: '未開始', notes: '', events: ['寫 3 句「今日靈感」', '整理本週靈感（5 分鐘）'] },
+            { id: 603, title: '旅遊 × 美感累積', status: '未開始', notes: '', events: ['Pinterest 搜集靈感（10 分鐘）', '寫 1 則生活體驗心得（5 分鐘）'] },
+        ]},
+    ];
+    
+    // 預設排程數據
+    const DEFAULT_SCHEDULED_ITEMS = {
+        '2025-12-05': [
+            { id: 101, title: '冒牌者焦慮調節', status: '已完成', notes: '今日練習 Crucial Conversations 第一章導讀。', eventTitle: '閱讀 Crucial Conversations 第 1 章（10 分鐘）', courseId: 1 },
+            { id: 301, title: '投資習慣', status: '進行中', notes: '', eventTitle: '檢查台股／美股部位（5 分鐘）', courseId: 3 }
+        ],
+        '2025-12-12': [
+            { id: 101, title: '冒牌者焦慮調節', status: '未開始', notes: '', eventTitle: '閱讀 Crucial Conversations 第 1 章（10 分鐘）', courseId: 1 },
+        ],
+        '2026-01-15': [
+            { id: 203, title: 'Power BI × AI 實作', status: '未開始', notes: '', eventTitle: 'Power BI 自動化練習：新增 1 個計算欄位（15 分鐘）', courseId: 2 }
+        ],
+    };
+
+    // --- LocalStorage 函數 ---
+    const LS_KEY_COURSES = 'planner_courses';
+    const LS_KEY_SCHEDULES = 'planner_schedules';
+
+    const saveToLocalStorage = (key, data) => {
+        try {
+            localStorage.setItem(key, JSON.stringify(data));
+        } catch (e) {
+            console.error('Error saving to LocalStorage', e);
+        }
+    };
+
+    const loadFromLocalStorage = (key, defaultValue) => {
+        try {
+            const stored = localStorage.getItem(key);
+            if (stored) {
+                return JSON.parse(stored);
+            }
+        } catch (e) {
+            console.error('Error loading from LocalStorage', e);
+            // 載入失敗時，清除舊資料並返回預設值
+            localStorage.removeItem(key);
+        }
+        return defaultValue;
+    };
+    
+    
+    createApp({
+        setup() {
+            
+            // 載入或使用預設值
+            const courses = reactive(loadFromLocalStorage(LS_KEY_COURSES, DEFAULT_COURSES));
+            const scheduledItems = reactive(loadFromLocalStorage(LS_KEY_SCHEDULES, DEFAULT_SCHEDULED_ITEMS));
+            
+            // --- 監聽數據變化並自動儲存 ---
+            watch(courses, (newCourses) => {
+                saveToLocalStorage(LS_KEY_COURSES, newCourses);
+            }, { deep: true }); // 深度監聽
+            
+            watch(scheduledItems, (newScheduledItems) => {
+                saveToLocalStorage(LS_KEY_SCHEDULES, newScheduledItems);
+            }, { deep: true }); // 深度監聽
+            
+            // ***************************************************************
+
+            const activeCourse = ref(1);
+            
+            // 行事曆月份邏輯 (從 2025/12 開始)
+            const currentYear = ref(2025); 
+            const currentMonth = ref(11); // 11 = 12月 (JavaScript Month Index 0-11)
+            
+            // --- SubItem Modal 狀態 (新增) ---
+            const isSubItemModalOpen = ref(false);
+            const editingSubItem = ref({});
+            const editingSubItemEventsText = ref('');
+            
+            // --- Computed & Helper Functions ---
+            const currentCourse = computed(() => {
+                return courses.find(c => c.id === activeCourse.value) || { name: '無選取課程', subItems: [] };
+            });
+
+            const statusColor = (status) => {
+                const map = {
+                    '未開始': { bg: 'bg-gray-100', text: 'text-gray-600', border: 'border-gray-400' },
+                    '進行中': { bg: 'bg-yellow-100', text: 'text-yellow-700', border: 'border-yellow-500' },
+                    '已完成': { bg: 'bg-green-100', text: 'text-green-700', border: 'border-green-500' },
+                    '延期/中斷': { bg: 'bg-red-100', text: 'text-red-700', border: 'border-red-500' },
+                };
+                return map[status] || map['未開始'];
+            };
+            
+            const currentMonthDisplay = computed(() => {
+                return `${currentYear.value} 年 ${currentMonth.value + 1} 月`;
+            });
+            
+            // 月份切換函數
+            const changeMonth = (delta) => {
+                let newDate = new Date(currentYear.value, currentMonth.value + delta, 1);
+                
+                // 限制月份範圍在 2025/12 - 2026/03
+                const minDate = new Date(2025, 11, 1); 
+                const maxDate = new Date(2026, 3, 1); 
+                
+                if (newDate.getTime() >= minDate.getTime() && newDate.getTime() < maxDate.getTime()) {
+                    currentYear.value = newDate.getFullYear();
+                    currentMonth.value = newDate.getMonth();
+                } else {
+                    alert('目前只提供 2025 年 12 月到 2026 年 3 月的規劃範圍。');
+                }
+            };
+
+
+            const daysInMonth = computed(() => {
+                const year = currentYear.value; 
+                const month = currentMonth.value; 
+                const days = [];
+                const today = formatDate(new Date());
+
+                const firstDay = new Date(year, month, 1);
+                const lastDay = new Date(year, month + 1, 0);
+                const startDayOfWeek = firstDay.getDay(); 
+                
+                // 渲染上個月的日期
+                for (let i = 0; i < startDayOfWeek; i++) {
+                    const prevMonthDate = new Date(year, month, i - startDayOfWeek + 1);
+                    days.push({ dayNum: prevMonthDate.getDate(), isCurrentMonth: false, date: '' }); 
+                }
+
+                // 渲染當前月份的日期
+                for (let i = 1; i <= lastDay.getDate(); i++) {
+                    const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(i).padStart(2, '0')}`;
+                    days.push({ 
+                        dayNum: i, 
+                        isCurrentMonth: true, 
+                        date: dateStr, 
+                        isToday: (dateStr === today) // 標記今天
+                    });
+                }
+                
+                // 渲染下個月的日期 (補滿格子)
+                const totalCells = days.length;
+                const remainingCells = 42 - totalCells; 
+                for (let i = 1; i <= remainingCells; i++) {
+                    const nextMonthDate = new Date(year, month + 1, i);
+                    days.push({ dayNum: nextMonthDate.getDate(), isCurrentMonth: false, date: '' });
+                }
+                
+                return days;
+            });
+
+            // 進度計算邏輯 (方案二：已完成次數 / 總排程次數)
+            const courseScheduleCounts = computed(() => {
+                const counts = {};
+                const currentMonthKey = `${currentYear.value}-${String(currentMonth.value + 1).padStart(2, '0')}`;
+                
+                // 初始化計數器
+                for (const course of courses) {
+                    counts[course.id] = { 
+                        completedCount: 0, // 已完成次數
+                        totalScheduledCount: 0, // 總排程次數
+                        percentage: 0 
+                    };
+                }
+
+                // 計算當月排程總次數和完成次數
+                for (const date in scheduledItems) {
+                    if (date.startsWith(currentMonthKey)) {
+                        for (const item of scheduledItems[date]) {
+                            if (item.courseId) {
+                                const courseId = item.courseId;
+                                counts[courseId].totalScheduledCount += 1; // 總排程 +1
+                                if (item.status === '已完成') {
+                                    counts[courseId].completedCount += 1; // 完成 +1
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                // 計算進度百分比: (完成次數 / 總排程次數) * 100
+                for (const id in counts) {
+                    const total = counts[id].totalScheduledCount;
+                    const completed = counts[id].completedCount;
+
+                    if (total > 0) {
+                        counts[id].percentage = (completed / total) * 100;
+                    } else {
+                        counts[id].percentage = 0;
+                    }
+                }
+                return counts;
+            });
+
+            // --- Modal & Scheduling Logic ---
+            const isScheduleModalOpen = ref(false);
+            const isRecordModalOpen = ref(false);
+            const schedulingItem = ref({});
+            const recordingItem = ref({});
+            const recordingDate = ref('');
+            const scheduleDate = ref(formatDate(new Date()));
+            const scheduleEventTitle = ref(''); 
+            const scheduleRecurrence = ref('once'); 
+
+            const openScheduleModal = (item) => {
+                schedulingItem.value = { ...item }; 
+                scheduleDate.value = formatDate(new Date()); 
+                scheduleEventTitle.value = item.events[0]; 
+                scheduleRecurrence.value = 'once'; 
+                isScheduleModalOpen.value = true;
+            };
+
+            // 輔助函數：將事件排入 scheduledItems
+            const addItemToSchedule = (dateKey, item) => {
+                if (!scheduledItems[dateKey]) {
+                    scheduledItems[dateKey] = []; // 確保為陣列
+                }
+                
+                // 檢查是否已存在相同的 subItem.id 和 eventTitle，防止重複排程
+                const existingIndex = scheduledItems[dateKey].findIndex(
+                    i => i.id === item.id && i.eventTitle === item.eventTitle
+                );
+
+                if (existingIndex === -1) {
+                    // 使用 push 確保 scheduledItems[dateKey] 是陣列
+                    if (Array.isArray(scheduledItems[dateKey])) {
+                        scheduledItems[dateKey].push(item);
+                    } else {
+                        // 處理舊資料結構或 LocalStorage 載入錯誤
+                         scheduledItems[dateKey] = [item];
+                    }
+                    return true;
+                }
+                return false;
+            };
+
+            // 排程活動
+            const scheduleActivity = () => {
+                if (!scheduleDate.value || !scheduleEventTitle.value) {
+                    alert('排程失敗：請務必輸入日期並選擇一個事件！');
+                    return; 
+                }
+                
+                let count = 0;
+                let currentDate = new Date(scheduleDate.value.replace(/-/g, '/')); 
+                currentDate.setHours(8); // 設定時間避免時區問題
+                
+                const maxDate = new Date(2026, 3, 31); // 限制到 2026/03/31
+                maxDate.setHours(8); // 設定時間避免時區問題
+
+                const baseItem = {
+                    id: schedulingItem.value.id,
+                    title: schedulingItem.value.title,
+                    status: '未開始', 
+                    notes: schedulingItem.value.notes || '',
+                    eventTitle: scheduleEventTitle.value,
+                    courseId: currentCourse.value.id 
+                };
+
+                // 處理單次排程
+                if (scheduleRecurrence.value === 'once') {
+                    if (addItemToSchedule(formatDate(currentDate), baseItem)) {
+                        count = 1;
+                    }
+                } 
+                // 處理每週排程 (持續 4 週)
+                else if (scheduleRecurrence.value === 'weekly') {
+                    const limit = 4; // 排程 4 週
+                    let scheduledWeeks = 0;
+                    
+                    while (scheduledWeeks < limit && currentDate <= maxDate) {
+                        const dateKey = formatDate(currentDate);
+                        
+                        // 檢查日期是否在有效月份範圍內
+                        const currentMonthLimit = new Date(currentDate.getFullYear(), currentDate.getMonth(), 1);
+                        const minDate = new Date(2025, 11, 1);
+                        
+                        if (currentMonthLimit.getTime() >= minDate.getTime() && currentMonthLimit.getTime() < new Date(2026, 4, 1).getTime()) {
+                            if (addItemToSchedule(dateKey, baseItem)) {
+                                count++;
+                                scheduledWeeks++;
+                            }
+                        }
+
+                        // 移動到下一週的同一天
+                        currentDate.setDate(currentDate.getDate() + 7);
+                    }
+                }
+                
+                if (count > 0) {
+                    alert(`成功排程 ${count} 個 [${scheduleEventTitle.value}] 事件！`);
+                } else {
+                    alert('排程失敗或事件已存在。');
+                }
+                
+                isScheduleModalOpen.value = false;
+                scheduleDate.value = formatDate(new Date()); 
+                scheduleEventTitle.value = '';
+                scheduleRecurrence.value = 'once';
+            };
+
+
+            const openRecordModal = (schedule, date) => {
+                // 複製物件以確保 v-model 不直接修改原始 reactive 資料，直到按下儲存
+                recordingItem.value = { ...schedule }; 
+                recordingDate.value = date;
+                isRecordModalOpen.value = true;
+            }
+
+            const saveRecord = () => {
+                const { id, status, notes, eventTitle } = recordingItem.value; 
+
+                // 1. 更新主清單狀態
+                for (let c of courses) {
+                    const subItem = c.subItems.find(item => item.id === id);
+                    if (subItem) {
+                        subItem.status = status;
+                        subItem.notes = notes;
+                        break;
+                    }
+                }
+
+                // 2. 更新行事曆中該單一排程的狀態、筆記和 eventTitle
+                if (scheduledItems[recordingDate.value] && Array.isArray(scheduledItems[recordingDate.value])) {
+                    scheduledItems[recordingDate.value] = scheduledItems[recordingDate.value].map(schedule => {
+                        // 必須確保是同一個 subItem id 和原本的 eventTitle 才能更新
+                        if (schedule.id === id && schedule.courseId === recordingItem.value.courseId) {
+                            schedule.status = status;
+                            schedule.notes = notes;
+                            schedule.eventTitle = eventTitle; // 更新 eventTitle
+                        }
+                        return schedule;
+                    });
+                }
+
+
+                alert(`[${eventTitle}] 的紀錄已儲存！`);
+                isRecordModalOpen.value = false;
+            }
+
+            // 刪除行程
+            const deleteSchedule = () => {
+                if (!confirm(`確定要刪除 [${recordingItem.value.eventTitle}] 在 ${recordingDate.value} 的行程嗎？`)) {
+                    return;
+                }
+                
+                const dateKey = recordingDate.value;
+                const itemToDelete = recordingItem.value;
+
+                if (scheduledItems[dateKey] && Array.isArray(scheduledItems[dateKey])) {
+                    scheduledItems[dateKey] = scheduledItems[dateKey].filter(item => 
+                        // 必須同時匹配 id 和 eventTitle 才能確保刪除單一排程
+                        !(item.id === itemToDelete.id && item.eventTitle === itemToDelete.eventTitle)
+                    );
+
+                    if (scheduledItems[dateKey].length === 0) {
+                        delete scheduledItems[dateKey];
+                    }
+
+                    alert(`成功刪除 [${itemToDelete.eventTitle}] 在 ${dateKey} 的行程！`);
+                    isRecordModalOpen.value = false;
+                    recordingItem.value = {};
+                    recordingDate.value = '';
+                } else {
+                    alert('刪除失敗：找不到該行程。');
+                }
+            };
+
+            
+            const handleDrop = (event, date) => {
+                if(date) { 
+                    alert(`請使用「點擊排程」功能來設定具體事件和重複頻率！`);
+                }
+            };
+            
+            // 匯出至 CSV 檔案
+            const exportToCSV = () => {
+                let csvContent = "data:text/csv;charset=utf-8,\uFEFF"; 
+                
+                let headers = ["日期", "課程ID", "子項目ID", "課程名稱", "子項目名稱", "具體事件", "狀態", "筆記/反思"];
+                csvContent += headers.join(",") + "\n";
+                
+                const allScheduledItems = [];
+                // 必須使用 Array.isArray 確保 scheduledItems[date] 是陣列
+                for (const date in scheduledItems) {
+                    if (Array.isArray(scheduledItems[date]) && scheduledItems[date].length > 0) {
+                        for (const item of scheduledItems[date]) {
+                            allScheduledItems.push({ ...item, date: date });
+                        }
+                    }
+                }
+                
+                allScheduledItems.sort((a, b) => (a.date > b.date) ? 1 : -1);
+
+                allScheduledItems.forEach(item => {
+                    const course = courses.find(c => c.id === item.courseId);
+                    const courseName = course?.name || '未知課程';
+                    
+                    // 確保 CSV 內容正確逃逸 (escape quotes)
+                    const escape = (text) => `"${String(text).replace(/"/g, '""')}"`;
+
+                    const row = [
+                        item.date,
+                        item.courseId,
+                        item.id, // 子項目 ID
+                        escape(courseName),
+                        escape(item.title), // 子項目名稱
+                        escape(item.eventTitle),
+                        escape(item.status),
+                        escape(item.notes)
+                    ];
+                    csvContent += row.join(",") + "\n";
+                });
+
+                const encodedUri = encodeURI(csvContent);
+                const link = document.createElement("a");
+                link.setAttribute("href", encodedUri);
+                link.setAttribute("download", `個人學習課綱排程_${currentYear.value}-${String(currentMonth.value + 1).padStart(2, '0')}.csv`);
+                document.body.appendChild(link);
+                link.click();
+                document.body.removeChild(link);
+            };
+
+            // 編輯課程名稱 (已修改，增加了編輯目標)
+            const editCourseName = (course) => {
+                const newName = prompt(`編輯課程名稱 (${course.icon})：`, course.name);
+                if (newName !== null && newName.trim() !== '') {
+                    const index = courses.findIndex(c => c.id === course.id);
+                    if (index !== -1) {
+                        courses[index].name = newName.trim();
+                        // 變動會被 watch 監聽到並自動儲存
+                    }
+                }
+                const newGoal = prompt(`編輯課程目標 (${course.name})：`, course.goal || '');
+                if (newGoal !== null) { // 允許目標為空字串
+                    const index = courses.findIndex(c => c.id === course.id);
+                    if (index !== -1) {
+                        courses[index].goal = newGoal.trim();
+                        alert(`課程 [${course.icon} ${courses[index].name}] 名稱與目標已更新！`);
+                    }
+                }
+            };
+            
+            // 子項目 新增/編輯 邏輯 (新增)
+            const openSubItemModal = (item) => {
+                // 如果傳入的 item 只有 courseId，則為新增模式
+                if (item.courseId) {
+                    editingSubItem.value = { 
+                        id: null, 
+                        courseId: item.courseId, // 用於定位儲存位置
+                        title: '', 
+                        status: '未開始', 
+                        notes: '', 
+                        events: [] 
+                    };
+                    editingSubItemEventsText.value = '';
+                } else {
+                    // 編輯模式
+                    editingSubItem.value = { ...item, courseId: activeCourse.value }; // 添加 courseId 以便定位
+                    editingSubItemEventsText.value = item.events.join('\n');
+                }
+                isSubItemModalOpen.value = true;
+            };
+
+            const saveSubItem = () => {
+                const currentCourseIndex = courses.findIndex(c => c.id === activeCourse.value);
+                if (currentCourseIndex === -1) {
+                    alert('儲存失敗：找不到目前選中的課程。');
+                    return;
+                }
+                
+                // 處理 events 欄位：將換行分隔的文字轉為陣列
+                const eventsArray = editingSubItemEventsText.value
+                                        .split('\n')
+                                        .map(line => line.trim())
+                                        .filter(line => line.length > 0);
+
+                // 準備儲存的物件
+                const itemToSave = {
+                    id: editingSubItem.value.id || Date.now(), // 新增時賦予唯一的 ID
+                    title: editingSubItem.value.title.trim(),
+                    status: editingSubItem.value.status,
+                    notes: editingSubItem.value.notes,
+                    events: eventsArray 
+                };
+                
+                const subItems = courses[currentCourseIndex].subItems;
+
+                if (editingSubItem.value.id) {
+                    // 編輯模式：替換舊的 subItem
+                    const index = subItems.findIndex(item => item.id === editingSubItem.value.id);
+                    if (index !== -1) {
+                        subItems[index] = itemToSave;
+                        alert(`子項目 [${itemToSave.title}] 已更新！`);
+                    }
+                } else {
+                    // 新增模式：推入新的 subItem
+                    subItems.push(itemToSave);
+                    alert(`子項目 [${itemToSave.title}] 已新增！`);
+                }
+
+                isSubItemModalOpen.value = false;
+            };
+            
+            const deleteSubItem = () => {
+                if (!confirm(`確定要刪除子項目 [${editingSubItem.value.title}] 嗎？這將無法恢復！`)) {
+                    return;
+                }
+                
+                const courseIndex = courses.findIndex(c => c.id === activeCourse.value);
+                if (courseIndex === -1) return;
+
+                const subItems = courses[courseIndex].subItems;
+                const index = subItems.findIndex(item => item.id === editingSubItem.value.id);
+
+                if (index !== -1) {
+                    subItems.splice(index, 1);
+                    // 清除與此 subItem 相關的排程（簡化處理：不清除，因為排程仍有價值，但警告使用者）
+                    alert(`子項目 [${editingSubItem.value.title}] 已刪除。請注意，已存在的行事曆排程仍保留。`);
+                }
+                
+                isSubItemModalOpen.value = false;
+            };
+
+
+            // 匯出課程數據 (JSON)
+            const exportCoursesJson = () => {
+                // 導出 courses 陣列
+                const dataStr = JSON.stringify(courses, null, 2);
+                
+                let dataUri = 'data:application/json;charset=utf-8,' + encodeURIComponent(dataStr);
+
+                let exportFileDefaultName = 'courses_data_latest.json';
+
+                let linkElement = document.createElement('a');
+                linkElement.setAttribute('href', dataUri);
+                linkElement.setAttribute('download', exportFileDefaultName);
+                document.body.appendChild(linkElement); // 需要添加到 document.body 才能觸發點擊
+                linkElement.click();
+                document.body.removeChild(linkElement);
+                
+                alert('已將最新課程數據 (JSON) 匯出！請儲存此檔案，以便下次提供給我進行程式碼修改。');
+            };
+
+
+            return {
+                courses,
+                activeCourse,
+                currentCourse,
+                currentMonthDisplay,
+                changeMonth,
+                daysInMonth,
+                scheduledItems,
+                statusColor,
+                isScheduleModalOpen,
+                schedulingItem,
+                scheduleDate,
+                scheduleEventTitle,
+                openScheduleModal,
+                scheduleActivity,
+                isRecordModalOpen,
+                recordingItem,
+                recordingDate,
+                openRecordModal,
+                saveRecord,
+                deleteSchedule, 
+                handleDrop,
+                exportToCSV,
+                courseScheduleCounts, 
+                scheduleRecurrence,
+                editCourseName,
+                exportCoursesJson,
+                // 新增子項目功能
+                isSubItemModalOpen,
+                editingSubItem,
+                editingSubItemEventsText,
+                openSubItemModal,
+                saveSubItem,
+                deleteSubItem,
+            }
+        }
+    }).mount('#app')
+</script>
+
+</body>
+</html>
