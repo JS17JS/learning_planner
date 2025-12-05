@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>個人成長學習軌跡 App - 日系極簡風 (v4.0 精簡版)</title>
+    <title>個人成長學習軌跡 App - 日系極簡風 (v5.0 任務編輯版)</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.jsdelivr.net/npm/vue@2.7.14/dist/vue.js"></script>
     <script src="https://unpkg.com/@phosphor-icons/web"></script>
@@ -34,6 +34,17 @@
         .bottom-nav {
             box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.08);
         }
+        /* 隱藏原生 checkbox */
+        .task-menu-dropdown {
+            position: absolute;
+            right: 0;
+            top: 30px;
+            z-index: 30;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+            width: 120px;
+        }
     </style>
     <script type="module">
         import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
@@ -47,7 +58,7 @@
         if (Object.keys(firebaseConfig).length > 0) {
             window.firebaseApp = initializeApp(firebaseConfig);
             window.db = getFirestore(window.firebaseApp);
-            window.auth = getAuth(window.firebaseApp);
+            window.auth = getAuth(window.auth);
             onAuthStateChanged(window.auth, async (user) => {
                 if (user) {
                     window.vueApp.userId = user.uid;
@@ -56,7 +67,7 @@
                 } else { await signInAnonymously(window.auth); }
                 window.vueApp.isAuthReady = true;
             });
-            window.dbFunctions = { doc, collection, query, onSnapshot, addDoc, updateDoc, serverTimestamp };
+            window.dbFunctions = { doc, collection, query, onSnapshot, addDoc, setDoc, updateDoc, deleteDoc, serverTimestamp }; // 新增 setDoc, deleteDoc
         } else {
             console.error("Firebase 配置未載入。App 將以模擬模式運行 (無法持久儲存資料)。");
             window.vueApp.isAuthReady = true;
@@ -64,16 +75,16 @@
     </script>
 </head>
 <body class="antialiased min-h-screen">
-    <div id="app" class="max-w-xl mx-auto min-h-screen bg-stone-50 pb-20"> <header class="h-[250px] relative overflow-hidden bg-amber-100">
+    <div id="app" class="max-w-xl mx-auto min-h-screen bg-stone-50 pb-20">
+
+        <header class="h-[250px] relative overflow-hidden bg-amber-100">
             <img src="https://placehold.co/1920x400/fff3e0/fff"
                  alt="可愛手繪學習計畫插畫"
                  class="absolute inset-0 w-full h-full object-cover opacity-80"
                  onerror="this.onerror=null;this.src='https://placehold.co/1920x400/fff3e0/fff'">
-
             <div class="absolute top-0 left-0 right-0 p-4 text-stone-800 text-center font-bold text-2xl z-20 opacity-80">
                 🚀 個人成長軌跡
             </div>
-
             <div class="absolute bottom-0 left-0 right-0 h-16 bg-stone-50"
                  style="border-top-left-radius: 40px; border-top-right-radius: 40px; transform: translateY(40px);">
             </div>
@@ -107,11 +118,29 @@
 
                 <div v-if="filteredTasks.length" class="space-y-3">
                     <div v-for="(task, index) in filteredTasks" :key="task.id"
-                         :class="['p-4 rounded-xl shadow-md border-l-4 transition duration-300',
+                         :class="['p-4 rounded-xl shadow-md border-l-4 transition duration-300 relative', // 新增 relative
                                    task.completed ? 'bg-stone-100 border-green-400 opacity-70' : 'bg-white border-amber-400']">
+                        
+                        <div class="absolute top-2 right-2 z-10">
+                            <button @click.stop="toggleTaskMenu(task.id)" 
+                                    class="p-1 text-stone-400 hover:text-stone-600 rounded-full hover:bg-stone-100 transition">
+                                <i class="ph ph-dots-three-vertical text-lg"></i>
+                            </button>
+                            
+                            <div v-if="task.showMenu" class="task-menu-dropdown">
+                                <button @click="openModal('EditTask', task)" 
+                                        class="w-full text-left px-3 py-2 text-sm text-stone-700 hover:bg-amber-50">
+                                    <i class="ph ph-pencil-simple mr-2"></i> 編輯
+                                </button>
+                                <button @click="deleteTask(task.id)" 
+                                        class="w-full text-left px-3 py-2 text-sm text-red-500 hover:bg-red-50">
+                                    <i class="ph ph-trash-simple mr-2"></i> 刪除
+                                </button>
+                            </div>
+                        </div>
+
                         <div class="flex items-center justify-between mb-2 text-stone-400 text-xs">
                             <span>課程 {{ task.courseId }}</span>
-                            <i class="ph ph-dots-three-vertical cursor-grab"></i>
                         </div>
 
                         <div class="flex items-center justify-between">
@@ -263,7 +292,9 @@
 
         <div v-if="modal.isVisible" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
             <div class="bg-white rounded-xl w-full max-w-md p-6 relative">
-                <h3 class="text-xl font-bold mb-4 text-stone-800">新增任務</h3>
+                <h3 class="text-xl font-bold mb-4 text-stone-800">
+                    {{ modal.mode === 'NewTask' ? '新增任務' : '編輯任務' }}
+                </h3>
 
                 <div class="space-y-3">
                     <input type="text" placeholder="任務內容 (e.g., 閱讀 Chapter 5)"
@@ -274,6 +305,9 @@
                         <option :value="null">選擇所屬課程</option>
                         <option v-for="course in courses" :value="course.id" :key="course.id">{{ course.name }}</option>
                     </select>
+                     <input v-if="modal.mode === 'EditTask'" type="date"
+                           v-model="newTask.dateString"
+                           class="w-full p-3 rounded-lg border border-stone-300 focus:ring-amber-400 focus:border-amber-400">
                 </div>
 
                 <div class="flex justify-end space-x-3 mt-6">
@@ -281,9 +315,14 @@
                         取消
                     </button>
                     <button @click="saveTask" class="px-4 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition">
-                        儲存任務
+                        {{ modal.mode === 'NewTask' ? '儲存任務' : '更新任務' }}
                     </button>
                 </div>
+
+                 <button v-if="modal.mode === 'EditTask'" @click="deleteTask(newTask.id, true)"
+                        class="mt-4 w-full py-2 bg-red-500 text-white rounded-lg hover:bg-red-600 transition">
+                    永久刪除此任務
+                </button>
             </div>
         </div>
 
@@ -300,7 +339,7 @@
                 currentMonth: new Date(),
                 selectedCourseFilter: 'All',
                 detailCourse: null,
-                dailyReflections: {}, // { 'YYYY-MM-DD': '心得內容' }
+                dailyReflections: {}, 
                 
                 // Req 3: 移除 'drafts' 和 'resources'
                 tabs: [
@@ -309,7 +348,7 @@
                     { id: 'monthly', name: '每月概覽', icon: 'ph-calendar-fill' },
                 ],
                 
-                // 資料模型 (課程新增 isEditing 狀態)
+                // 資料模型
                 courses: [
                     { id: 1, name: '心理成長與習慣養成', shortName: '心理成長', isEditing: false, goal: '掌握情緒調適與高生產力習慣', outcome: '每日反思日記、行動清單', totalTasks: 18, completedCount: 12, learningContent: [{ id: 'A', name: '焦慮三問練習' }] },
                     { id: 2, name: '金融與 AI 專業技能', shortName: '金融AI', isEditing: false, goal: '應用 GenAI 提升金融決策效率', outcome: '三份市場分析報告', totalTasks: 25, completedCount: 5, learningContent: [{ id: 'C', name: '學習 Python 金融套件' }] },
@@ -318,11 +357,9 @@
                     { id: 5, name: '內容創作與個人品牌', shortName: '內容創作', isEditing: false, goal: '每週產出高品質的知識內容', outcome: '十篇部落格草稿', totalTasks: 12, completedCount: 4, learningContent: [{ id: 'G', name: '發想主題 Q' }] },
                     { id: 6, name: '生活美感與體驗', shortName: '生活美感', isEditing: false, goal: '提升生活品質與靈感捕捉能力', outcome: '照片靈感集、深度體驗紀錄', totalTasks: 10, completedCount: 10, learningContent: [{ id: 'P', name: '紀錄生活靈感' }] },
                 ],
-                tasks: [],
-                // drafts: [], // 移除
-                // resources: [], // 移除
+                tasks: [], // 任務列表，新增 showMenu 狀態
                 
-                newTask: { content: '', courseId: null, },
+                newTask: { id: null, content: '', courseId: null, dateString: null }, // 用於 Modal 的臨時數據
                 
                 modal: { isVisible: false, mode: 'NewTask', data: {} }
             },
@@ -357,11 +394,14 @@
                 },
                 filteredTasks() {
                     const selectedDate = this.formatDate(this.currentDate, 'YYYY-MM-DD');
+                    // 確保 task.date 是 Date 對象或可以轉換
                     return this.tasks
-                        .filter(task => this.formatDate(task.date, 'YYYY-MM-DD') === selectedDate)
+                        .filter(task => {
+                            const taskDate = task.date instanceof Date ? task.date : new Date(task.date);
+                            return this.formatDate(taskDate, 'YYYY-MM-DD') === selectedDate;
+                        })
                         .filter(task => this.selectedCourseFilter === 'All' || task.courseId === parseInt(this.selectedCourseFilter));
                 },
-                // 移除 totalCompletedCount (Req 1)
                 courseProgress() {
                     const progress = {};
                     this.courses.forEach(course => {
@@ -373,7 +413,6 @@
                     });
                     return progress;
                 },
-                // Req 4: 月份概覽計算 (顯示課程名稱縮寫)
                 monthlyView() {
                     const month = this.currentMonth.getMonth();
                     const year = this.currentMonth.getFullYear();
@@ -384,9 +423,7 @@
                     let startDayOfWeek = firstDay.getDay();
 
                     const calendar = [];
-                    const tasksByDate = {}; // { 'YYYY-MM-DD': [課程名稱縮寫陣列] }
-
-                    // 1. 建立日期 -> 課程名稱縮寫 映射
+                    const tasksByDate = {}; 
                     const courseMap = this.courses.reduce((map, course) => {
                         map[course.id] = course.shortName;
                         return map;
@@ -403,12 +440,10 @@
                         }
                     });
 
-                    // 填充上個月的日期
                     for (let i = 0; i < startDayOfWeek; i++) {
                         calendar.push({ day: null, isCurrentMonth: false, courseNames: [] });
                     }
 
-                    // 填充本月的日期
                     for (let i = 1; i <= numDays; i++) {
                         const date = new Date(year, month, i);
                         const dateString = this.formatDate(date, 'YYYY-MM-DD');
@@ -421,11 +456,10 @@
                             isCurrentMonth: true,
                             isSelected: dateString === this.formatDate(this.currentDate, 'YYYY-MM-DD'),
                             isToday: dateString === this.formatDate(new Date(), 'YYYY-MM-DD'),
-                            courseNames: courseNames, // 課程名稱縮寫陣列
+                            courseNames: courseNames, 
                         });
                     }
 
-                    // 填充下個月的日期
                     while (calendar.length % 7 !== 0) {
                         calendar.push({ day: null, isCurrentMonth: false, courseNames: [] });
                     }
@@ -470,32 +504,59 @@
                         alert('心得已儲存！');
                     }
                 },
+                // 任務操作菜單
+                toggleTaskMenu(taskId) {
+                    this.tasks = this.tasks.map(t => ({
+                        ...t,
+                        showMenu: t.id === taskId ? !t.showMenu : false // 點擊當前任務，且關閉其他任務菜單
+                    }));
+                },
+                // 打開 Modal (新增/編輯)
                 openModal(mode, data = {}) {
+                    // 關閉所有任務菜單
+                    this.tasks = this.tasks.map(t => ({ ...t, showMenu: false }));
+
                     this.modal.mode = mode;
                     this.modal.data = data;
+                    
+                    if (mode === 'EditTask') {
+                        // 載入編輯數據
+                        this.newTask = {
+                            id: data.id,
+                            content: data.content,
+                            courseId: data.courseId,
+                            dateString: this.formatDate(data.date, 'YYYY-MM-DD') // 轉換為日期輸入框所需格式
+                        };
+                    } else {
+                        // 新增任務時，預設日期為當前選擇的日期
+                        this.newTask = {
+                            id: null,
+                            content: '',
+                            courseId: null,
+                            dateString: this.formatDate(this.currentDate, 'YYYY-MM-DD')
+                        };
+                    }
                     this.modal.isVisible = true;
                 },
                 closeModal() {
                     this.modal.isVisible = false;
                     this.modal.data = {};
-                    this.newTask = { content: '', courseId: null };
+                    this.newTask = { id: null, content: '', courseId: null, dateString: null };
                 },
-                // Req 2: 切換目標/成果的編輯模式
                 toggleEditCourse(courseId) {
                     const course = this.courses.find(c => c.id === courseId);
                     if (course) {
-                        // 模擬儲存 (如果進入編輯模式，下次點擊就是儲存)
                         if (course.isEditing) {
-                            // 在這裡可以加入 Firebase 或 LocalStorage 的儲存邏輯
                             console.log(`課程 ${courseId} 目標/成果已儲存。`);
+                            // 這裡可以加入 Firebase 的 setDoc/updateDoc 儲存邏輯
                         }
                         course.isEditing = !course.isEditing;
                     }
                 },
                 fetchData(collectionName) {
+                    // ... 數據載入邏輯 (保持不變)
                     if (collectionName === 'reflections') {
-                         // 模擬從 LocalStorage 載入心得
-                        for (let i = 0; i < localStorage.length; i++) {
+                         for (let i = 0; i < localStorage.length; i++) {
                             const key = localStorage.key(i);
                             if (key.startsWith('reflection-')) {
                                 const dateKey = key.replace('reflection-', '');
@@ -508,26 +569,76 @@
                     if (!window.dbFunctions || !this.userId) return;
                     // ... Firebase 數據載入邏輯 (保持不變)
                 },
+                // 儲存或更新任務
                 async saveTask() {
                     if (!this.newTask.content || !this.newTask.courseId) {
                         alert('請輸入任務內容並選擇所屬課程！');
                         return;
                     }
+
+                    const isNew = this.modal.mode === 'NewTask';
+                    
+                    let taskDate;
+                    if (this.newTask.dateString) {
+                         // 從 YYYY-MM-DD 字符串創建日期對象
+                        const parts = this.newTask.dateString.split('-');
+                        taskDate = new Date(parts[0], parts[1] - 1, parts[2]);
+                    } else {
+                        // 如果是新增，且沒有日期字串 (不應該發生)，則使用當前選定日期
+                        taskDate = this.currentDate;
+                    }
+
                     const taskData = {
-                        date: this.currentDate,
+                        date: taskDate,
                         courseId: parseInt(this.newTask.courseId),
                         content: this.newTask.content,
-                        completed: false,
-                        createdAt: window.dbFunctions ? window.dbFunctions.serverTimestamp() : new Date(),
+                        // 新增任務時預設為 false
+                        completed: isNew ? false : (this.modal.data.completed || false),
+                        createdAt: isNew && window.dbFunctions ? window.dbFunctions.serverTimestamp() : (this.modal.data.createdAt || new Date()),
                     };
 
                     if (window.dbFunctions && this.userId) {
-                        // ... Firebase 儲存邏輯 (保持不變)
+                        // Firebase 儲存/更新邏輯
+                        const dataPath = `/artifacts/${__app_id}/users/${this.userId}/tasks`;
+                        if (isNew) {
+                            await window.dbFunctions.addDoc(window.dbFunctions.collection(window.db, dataPath), taskData);
+                        } else {
+                            await window.dbFunctions.updateDoc(window.dbFunctions.doc(window.db, dataPath, this.newTask.id), taskData);
+                        }
                     } else {
-                        // 模擬 Local 儲存
-                        this.tasks.push({ id: `t${Date.now()}`, ...taskData });
+                        // 模擬 Local 儲存/更新
+                        if (isNew) {
+                            this.tasks.push({ id: `t${Date.now()}`, ...taskData, showMenu: false });
+                        } else {
+                            const index = this.tasks.findIndex(t => t.id === this.newTask.id);
+                            if (index !== -1) {
+                                this.$set(this.tasks, index, { ...this.tasks[index], ...taskData, showMenu: false });
+                            }
+                        }
                     }
                     this.closeModal();
+                },
+                // 刪除任務
+                async deleteTask(taskId, closeAfterDelete = false) {
+                    if (!confirm('您確定要刪除此任務嗎？')) return;
+
+                    if (window.dbFunctions && this.userId) {
+                        // Firebase 刪除邏輯
+                        const dataPath = `/artifacts/${__app_id}/users/${this.userId}/tasks`;
+                        await window.dbFunctions.deleteDoc(window.dbFunctions.doc(window.db, dataPath, taskId));
+                    } else {
+                        // 模擬 Local 刪除
+                        const index = this.tasks.findIndex(t => t.id === taskId);
+                        if (index !== -1) {
+                            this.tasks.splice(index, 1);
+                        }
+                    }
+                    
+                    if (closeAfterDelete) {
+                        this.closeModal();
+                    } else {
+                        this.tasks = this.tasks.map(t => ({ ...t, showMenu: false })); // 關閉菜單
+                    }
                 },
                 async toggleTaskCompletion(taskId, isCompleted) {
                     if (!window.dbFunctions || !this.userId) {
@@ -548,13 +659,11 @@
 
                     // ... Firebase 邏輯 (保持不變)
                 },
-                // 月曆切換月份
                 navigateMonth(offset) {
                     const newDate = new Date(this.currentMonth);
                     newDate.setMonth(newDate.getMonth() + offset);
                     this.currentMonth = newDate;
                 },
-                // 從月曆視圖點擊日期
                 selectDayFromMonthly(day) {
                     if (day.date) {
                         this.currentDate = day.date;
@@ -566,21 +675,31 @@
                 if (!window.firebaseApp) {
                     // 模擬數據
                     this.tasks = [
-                        { id: 't1', date: new Date(), courseId: 1, content: '讀《The Mountain Is You》', completed: true, completedAt: new Date(new Date().setHours(8, 0, 0)) },
-                        { id: 't2', date: new Date(), courseId: 2, content: '撰寫 AI 報告草稿', completed: false },
-                        { id: 't3', date: new Date(), courseId: 6, content: '記錄生活靈感 P', completed: false },
-                        { id: 't4', date: new Date(new Date().setDate(new Date().getDate() + 1)), courseId: 3, content: '建立 Q3 財務模型', completed: false },
-                        { id: 't5', date: new Date(new Date().setDate(new Date().getDate() - 2)), courseId: 4, content: '練習主題 M 簡報', completed: true, completedAt: new Date(new Date().setHours(14, 30, 0)) },
-                        { id: 't6', date: new Date(), courseId: 1, content: '早上冥想 10 分鐘', completed: true, completedAt: new Date(new Date().setHours(7, 0, 0)) },
-                        { id: 't7', date: new Date(new Date().setDate(new Date().getDate() - 15)), courseId: 5, content: '發想主題 Q', completed: false },
-                        { id: 't8', date: new Date(new Date().setDate(new Date().getDate() - 15)), courseId: 2, content: '學習 Python 金融套件', completed: true },
-                        { id: 't9', date: new Date(new Date().setDate(new Date().getDate() - 15)), courseId: 4, content: '模擬外商會議', completed: true },
-                        { id: 't10', date: new Date(new Date().setDate(new Date().getDate() - 5)), courseId: 1, content: '焦慮三問練習', completed: true },
-                        { id: 't11', date: new Date(new Date().setDate(new Date().getDate() - 5)), courseId: 4, content: '閱讀英文新聞', completed: true },
-                        { id: 't12', date: new Date(new Date().setDate(new Date().getDate() - 5)), courseId: 5, content: '文章大綱確立', completed: false },
-                        { id: 't13', date: new Date(new Date().setDate(new Date().getDate() - 5)), courseId: 2, content: 'AI 語義分析', completed: true },
+                        { id: 't1', date: new Date(), courseId: 1, content: '讀《The Mountain Is You》', completed: true, completedAt: new Date(new Date().setHours(8, 0, 0)), showMenu: false },
+                        { id: 't2', date: new Date(), courseId: 2, content: '撰寫 AI 報告草稿', completed: false, showMenu: false },
+                        { id: 't3', date: new Date(), courseId: 6, content: '記錄生活靈感 P', completed: false, showMenu: false },
+                        { id: 't4', date: new Date(new Date().setDate(new Date().getDate() + 1)), courseId: 3, content: '建立 Q3 財務模型', completed: false, showMenu: false },
+                        { id: 't5', date: new Date(new Date().setDate(new Date().getDate() - 2)), courseId: 4, content: '練習主題 M 簡報', completed: true, completedAt: new Date(new Date().setHours(14, 30, 0)), showMenu: false },
+                        { id: 't6', date: new Date(), courseId: 1, content: '早上冥想 10 分鐘', completed: true, completedAt: new Date(new Date().setHours(7, 0, 0)), showMenu: false },
+                        { id: 't7', date: new Date(new Date().setDate(new Date().getDate() - 15)), courseId: 5, content: '發想主題 Q', completed: false, showMenu: false },
+                        { id: 't8', date: new Date(new Date().setDate(new Date().getDate() - 15)), courseId: 2, content: '學習 Python 金融套件', completed: true, showMenu: false },
+                        { id: 't9', date: new Date(new Date().setDate(new Date().getDate() - 15)), courseId: 4, content: '模擬外商會議', completed: true, showMenu: false },
+                        { id: 't10', date: new Date(new Date().setDate(new Date().getDate() - 5)), courseId: 1, content: '焦慮三問練習', completed: true, showMenu: false },
+                        { id: 't11', date: new Date(new Date().setDate(new Date().getDate() - 5)), courseId: 4, content: '閱讀英文新聞', completed: true, showMenu: false },
+                        { id: 't12', date: new Date(new Date().setDate(new Date().getDate() - 5)), courseId: 5, content: '文章大綱確立', completed: false, showMenu: false },
+                        { id: 't13', date: new Date(new Date().setDate(new Date().getDate() - 5)), courseId: 2, content: 'AI 語義分析', completed: true, showMenu: false },
                     ];
                     this.fetchData('reflections');
+                }
+            }
+        });
+
+         // 點擊 App 外部時關閉任務菜單
+        document.addEventListener('click', (e) => {
+            if (window.vueApp && window.vueApp.tasks) {
+                 const isMenuButton = e.target.closest('.ph-dots-three-vertical') || e.target.closest('.task-menu-dropdown');
+                if (!isMenuButton) {
+                    window.vueApp.tasks = window.vueApp.tasks.map(t => ({ ...t, showMenu: false }));
                 }
             }
         });
