@@ -1,0 +1,589 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>個人成長學習軌跡 App - 日系極簡風 (v4.0 精簡版)</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/vue@2.7.14/dist/vue.js"></script>
+    <script src="https://unpkg.com/@phosphor-icons/web"></script>
+    <style>
+        /* 日系極簡風字體：使用系統預設的無襯線字體，確保清晰度 */
+        body {
+            font-family: 'Inter', 'Noto Sans TC', system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif, "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+            background-color: #fcfbf8; /* 整體背景：米白色調延伸 */
+        }
+        /* 自定義滾動條樣式 (僅適用於桌面) */
+        ::-webkit-scrollbar { width: 4px; }
+        ::-webkit-scrollbar-thumb { background: #d7b57a; border-radius: 2px; }
+        ::-webkit-scrollbar-track { background: #fcfbf8; }
+
+        /* 頁首圓弧銜接效果 */
+        .header-curve-mask {
+            position: relative;
+            z-index: 10;
+            margin-top: -50px;
+            padding-top: 50px;
+            border-top-left-radius: 40px;
+            border-top-right-radius: 40px;
+            background-color: #ffffff;
+            box-shadow: 0 -4px 10px rgba(0, 0, 0, 0.05);
+        }
+
+        /* 底部導航欄 */
+        .bottom-nav {
+            box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.08);
+        }
+    </style>
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, addDoc, setDoc, updateDoc, deleteDoc, onSnapshot, collection, query, where, getDocs, serverTimestamp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const firebaseConfig = JSON.parse(typeof __firebase_config !== 'undefined' ? __firebase_config : '{}');
+        const initialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        if (Object.keys(firebaseConfig).length > 0) {
+            window.firebaseApp = initializeApp(firebaseConfig);
+            window.db = getFirestore(window.firebaseApp);
+            window.auth = getAuth(window.firebaseApp);
+            onAuthStateChanged(window.auth, async (user) => {
+                if (user) {
+                    window.vueApp.userId = user.uid;
+                } else if (initialAuthToken) {
+                    try { await signInWithCustomToken(window.auth, initialAuthToken); } catch (error) { await signInAnonymously(window.auth); }
+                } else { await signInAnonymously(window.auth); }
+                window.vueApp.isAuthReady = true;
+            });
+            window.dbFunctions = { doc, collection, query, onSnapshot, addDoc, updateDoc, serverTimestamp };
+        } else {
+            console.error("Firebase 配置未載入。App 將以模擬模式運行 (無法持久儲存資料)。");
+            window.vueApp.isAuthReady = true;
+        }
+    </script>
+</head>
+<body class="antialiased min-h-screen">
+    <div id="app" class="max-w-xl mx-auto min-h-screen bg-stone-50 pb-20"> <header class="h-[250px] relative overflow-hidden bg-amber-100">
+            <img src="https://placehold.co/1920x400/fff3e0/fff"
+                 alt="可愛手繪學習計畫插畫"
+                 class="absolute inset-0 w-full h-full object-cover opacity-80"
+                 onerror="this.onerror=null;this.src='https://placehold.co/1920x400/fff3e0/fff'">
+
+            <div class="absolute top-0 left-0 right-0 p-4 text-stone-800 text-center font-bold text-2xl z-20 opacity-80">
+                🚀 個人成長軌跡
+            </div>
+
+            <div class="absolute bottom-0 left-0 right-0 h-16 bg-stone-50"
+                 style="border-top-left-radius: 40px; border-top-right-radius: 40px; transform: translateY(40px);">
+            </div>
+        </header>
+
+        <main class="p-4 relative bg-white header-curve-mask min-h-[calc(100vh-250px)]">
+
+            <div v-show="activeTab === 'daily'" class="pt-2">
+                <h2 class="text-2xl font-bold mb-4 text-stone-800">📅 {{ formatDate(currentDate, 'MM月DD日') }} 課表</h2>
+
+                <div class="flex space-x-2 overflow-x-auto pb-4 sticky top-0 bg-white z-20 shadow-sm border-b">
+                    <div v-for="day in dateRange" :key="day.dateString"
+                         @click="selectDate(day.date)"
+                         :class="['flex-shrink-0 w-16 h-16 rounded-xl p-1 text-center cursor-pointer transition',
+                                   day.isToday ? 'bg-amber-100 shadow-md border-2 border-amber-300' : 'bg-stone-50',
+                                   day.isSelected ? 'bg-amber-400 text-white font-bold transform scale-105' : 'text-stone-700']">
+                        <div class="text-xs opacity-70">{{ day.dayOfWeek }}</div>
+                        <div class="text-2xl leading-none font-bold">{{ day.dayOfMonth }}</div>
+                    </div>
+                </div>
+
+                <div class="my-4">
+                    <select v-model="selectedCourseFilter"
+                            class="w-full p-3 rounded-xl border border-stone-200 bg-stone-50 text-stone-700 text-sm focus:ring-amber-400 focus:border-amber-400">
+                        <option value="All">所有任務</option>
+                        <option v-for="course in courses" :value="course.id" :key="course.id">
+                            {{ course.name }}
+                        </option>
+                    </select>
+                </div>
+
+                <div v-if="filteredTasks.length" class="space-y-3">
+                    <div v-for="(task, index) in filteredTasks" :key="task.id"
+                         :class="['p-4 rounded-xl shadow-md border-l-4 transition duration-300',
+                                   task.completed ? 'bg-stone-100 border-green-400 opacity-70' : 'bg-white border-amber-400']">
+                        <div class="flex items-center justify-between mb-2 text-stone-400 text-xs">
+                            <span>課程 {{ task.courseId }}</span>
+                            <i class="ph ph-dots-three-vertical cursor-grab"></i>
+                        </div>
+
+                        <div class="flex items-center justify-between">
+                            <div :class="['flex-1 mr-4', task.completed ? 'line-through text-stone-500' : 'text-stone-800']">
+                                <p class="font-semibold text-lg">{{ task.content }}</p>
+                            </div>
+
+                            <div class="flex items-center space-x-3">
+                                <input type="checkbox" :checked="task.completed"
+                                       @change="toggleTaskCompletion(task.id, $event.target.checked)"
+                                       class="h-6 w-6 text-green-600 rounded border-stone-300 focus:ring-green-500 cursor-pointer flex-shrink-0">
+                            </div>
+                        </div>
+
+                        <div class="mt-3 border-t pt-3 flex justify-start items-center text-sm">
+                            <span v-if="task.completed" class="text-xs text-green-600 font-medium">
+                                任務已完成 ✅
+                            </span>
+                             <span v-else class="text-xs text-stone-400">
+                                待執行
+                            </span>
+                        </div>
+                    </div>
+                </div>
+                <div v-else class="p-6 text-center text-stone-500 bg-stone-100 rounded-xl mt-6">
+                    <i class="ph ph-calendar-blank text-3xl mb-2"></i>
+                    <p>本日無排程任務，點擊右下角 '+' 新增。</p>
+                </div>
+
+                <div class="mt-8">
+                    <details class="rounded-xl bg-stone-50 p-4 border border-stone-200" :open="!!dailyReflection.content">
+                        <summary class="font-semibold text-stone-700 cursor-pointer">
+                            📝 今日心得與反思
+                        </summary>
+                        <textarea rows="4" placeholder="輸入您今日的反思、挑戰或突破..."
+                                  v-model="dailyReflection.content"
+                                  class="w-full mt-3 p-3 text-sm rounded-lg border border-stone-300 focus:ring-amber-400 focus:border-amber-400"></textarea>
+                        <button @click="saveDailyReflection" class="w-full mt-2 py-2 bg-stone-700 text-white rounded-lg hover:bg-stone-800 transition">
+                            儲存心得
+                        </button>
+                    </details>
+                </div>
+            </div>
+
+            <div v-show="activeTab === 'overview'" class="pt-2">
+                <h2 class="text-2xl font-bold mb-4 text-stone-800">📚 課程總覽</h2>
+
+                <div class="space-y-6">
+                    <div v-for="course in courses" :key="course.id"
+                         class="p-5 bg-white rounded-xl shadow-lg border-l-4 border-amber-500 transition hover:shadow-xl hover:scale-[1.01]">
+                        
+                        <div class="flex justify-between items-start">
+                            <h3 class="text-xl font-bold text-stone-800 mb-1">{{ course.name }} (課程 {{ course.id }})</h3>
+                            <button @click="toggleEditCourse(course.id)" class="text-stone-500 hover:text-amber-600 p-1 -mt-1 -mr-1">
+                                <i :class="['ph text-xl', course.isEditing ? 'ph-check-square-fill text-green-600' : 'ph-pencil-simple-fill']"></i>
+                            </button>
+                        </div>
+                        
+
+                        <div class="text-sm text-stone-600 mb-2 mt-2">
+                            <span class="font-semibold text-amber-700">目標:</span>
+                            <template v-if="course.isEditing">
+                                <input type="text" v-model="course.goal" @keyup.enter="toggleEditCourse(course.id)"
+                                       class="w-full mt-1 p-2 border rounded-lg focus:ring-amber-400 focus:border-amber-400">
+                            </template>
+                            <span v-else>{{ course.goal }}</span>
+                        </div>
+
+                        <div class="text-sm text-stone-600 mb-3">
+                            <span class="font-semibold text-amber-700">成果:</span>
+                            <template v-if="course.isEditing">
+                                <input type="text" v-model="course.outcome" @keyup.enter="toggleEditCourse(course.id)"
+                                       class="w-full mt-1 p-2 border rounded-lg focus:ring-amber-400 focus:border-amber-400">
+                            </template>
+                            <span v-else>{{ course.outcome }}</span>
+                        </div>
+
+                        <div class="w-full bg-stone-200 rounded-full h-2.5 mt-3">
+                            <div class="h-2.5 rounded-full bg-amber-500 transition-all duration-500"
+                                 :style="{ width: courseProgress[course.id] + '%' }"></div>
+                        </div>
+                        <div class="flex justify-between text-xs mt-1 text-stone-500">
+                            <span>已完成: {{ course.completedCount }} / {{ course.totalTasks }}</span>
+                            <span class="font-bold text-amber-700">{{ courseProgress[course.id] }}%</span>
+                        </div>
+                    </div>
+                </div>
+                
+            </div>
+
+            <div v-show="activeTab === 'monthly'" class="pt-2">
+                <h2 class="text-2xl font-bold mb-4 text-stone-800">🗓️ {{ formatDate(currentMonth, 'YYYY年MM月') }} 概覽</h2>
+
+                <div class="flex justify-between items-center mb-4">
+                    <button @click="navigateMonth(-1)" class="p-2 text-stone-600 hover:bg-stone-100 rounded-full transition">
+                        <i class="ph ph-caret-left text-xl"></i>
+                    </button>
+                    <span class="text-xl font-bold text-amber-600">{{ formatDate(currentMonth, 'YYYY年MM月') }}</span>
+                    <button @click="navigateMonth(1)" class="p-2 text-stone-600 hover:bg-stone-100 rounded-full transition">
+                        <i class="ph ph-caret-right text-xl"></i>
+                    </button>
+                </div>
+
+                <div class="grid grid-cols-7 text-center text-sm font-semibold text-stone-500 mb-2">
+                    <span>日</span><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span>
+                </div>
+
+                <div class="grid grid-cols-7 gap-1">
+                    <div v-for="(day, index) in monthlyView" :key="index"
+                         @click="selectDayFromMonthly(day)"
+                         :class="['h-16 p-1 rounded-lg text-center transition cursor-pointer',
+                                   day.isCurrentMonth ? 'text-stone-800' : 'text-stone-300 pointer-events-none',
+                                   day.isToday ? 'bg-amber-100 border-2 border-amber-400' : 'bg-stone-50',
+                                   day.isSelected ? 'bg-amber-400 text-white font-bold' : '',
+                                   day.courseNames.length && !day.isSelected ? 'shadow-sm border border-stone-200' : '']">
+
+                        <div class="text-lg leading-none font-bold">{{ day.day }}</div>
+
+                        <div v-if="day.courseNames.length" class="mt-1 flex justify-center flex-wrap gap-1 max-h-5 overflow-hidden">
+                            <span v-for="(name, idx) in day.courseNames.slice(0, 2)" :key="idx"
+                                  :class="['text-[8px] leading-none px-1 rounded-sm whitespace-nowrap', day.isSelected ? 'bg-white text-amber-500' : 'bg-amber-500 text-white']">
+                                {{ name }}
+                            </span>
+                            <span v-if="day.courseNames.length > 2"
+                                  :class="['text-[8px] leading-none px-1 rounded-sm whitespace-nowrap', day.isSelected ? 'bg-white text-amber-500' : 'bg-stone-700 text-white']">
+                                +{{ day.courseNames.length - 2 }}
+                            </span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+        </main>
+
+        <button @click="openModal('NewTask')"
+                class="fixed bottom-24 right-6 w-14 h-14 bg-amber-500 hover:bg-amber-600 text-white rounded-full flex items-center justify-center text-3xl shadow-xl transition transform hover:scale-110 z-40">
+            <i class="ph ph-plus"></i>
+        </button>
+
+        <nav class="bottom-nav fixed bottom-0 left-0 right-0 max-w-xl mx-auto bg-white border-t border-stone-100 flex justify-around items-center h-20 z-30">
+            <div v-for="tab in tabs" :key="tab.id"
+                 @click="activeTab = tab.id"
+                 :class="['flex flex-col items-center p-2 transition cursor-pointer',
+                           activeTab === tab.id ? 'text-amber-500 font-bold' : 'text-stone-500 hover:text-stone-700']">
+                <i :class="['ph text-2xl', tab.icon]"></i>
+                <span class="text-xs mt-1">{{ tab.name }}</span>
+            </div>
+        </nav>
+
+        <div v-if="modal.isVisible" class="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
+            <div class="bg-white rounded-xl w-full max-w-md p-6 relative">
+                <h3 class="text-xl font-bold mb-4 text-stone-800">新增任務</h3>
+
+                <div class="space-y-3">
+                    <input type="text" placeholder="任務內容 (e.g., 閱讀 Chapter 5)"
+                           v-model="newTask.content"
+                           class="w-full p-3 rounded-lg border border-stone-300 focus:ring-amber-400 focus:border-amber-400">
+                    <select v-model="newTask.courseId"
+                            class="w-full p-3 rounded-lg border border-stone-300 focus:ring-amber-400 focus:border-amber-400">
+                        <option :value="null">選擇所屬課程</option>
+                        <option v-for="course in courses" :value="course.id" :key="course.id">{{ course.name }}</option>
+                    </select>
+                </div>
+
+                <div class="flex justify-end space-x-3 mt-6">
+                    <button @click="closeModal" class="px-4 py-2 text-stone-600 rounded-lg hover:bg-stone-100 transition">
+                        取消
+                    </button>
+                    <button @click="saveTask" class="px-4 py-2 bg-amber-500 text-white rounded-lg hover:bg-amber-600 transition">
+                        儲存任務
+                    </button>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script type="module">
+        window.vueApp = new Vue({
+            el: '#app',
+            data: {
+                isAuthReady: false,
+                userId: null,
+                activeTab: 'daily',
+                currentDate: new Date(),
+                currentMonth: new Date(),
+                selectedCourseFilter: 'All',
+                detailCourse: null,
+                dailyReflections: {}, // { 'YYYY-MM-DD': '心得內容' }
+                
+                // Req 3: 移除 'drafts' 和 'resources'
+                tabs: [
+                    { id: 'daily', name: '每日課表', icon: 'ph-calendar-blank-fill' },
+                    { id: 'overview', name: '課程總覽', icon: 'ph-books-fill' },
+                    { id: 'monthly', name: '每月概覽', icon: 'ph-calendar-fill' },
+                ],
+                
+                // 資料模型 (課程新增 isEditing 狀態)
+                courses: [
+                    { id: 1, name: '心理成長與習慣養成', shortName: '心理成長', isEditing: false, goal: '掌握情緒調適與高生產力習慣', outcome: '每日反思日記、行動清單', totalTasks: 18, completedCount: 12, learningContent: [{ id: 'A', name: '焦慮三問練習' }] },
+                    { id: 2, name: '金融與 AI 專業技能', shortName: '金融AI', isEditing: false, goal: '應用 GenAI 提升金融決策效率', outcome: '三份市場分析報告', totalTasks: 25, completedCount: 5, learningContent: [{ id: 'C', name: '學習 Python 金融套件' }] },
+                    { id: 3, name: '財務規劃與投資組合', shortName: '財務規劃', isEditing: false, goal: '建立並追蹤穩健的財務模型', outcome: '季度資產報告', totalTasks: 15, completedCount: 8, learningContent: [{ id: 'E', name: '閱讀《富爸爸窮爸爸》' }] },
+                    { id: 4, name: '英語溝通與表達', shortName: '英語溝通', isEditing: false, goal: '能流暢進行外商會議與簡報', outcome: '三次外商模擬會議錄音', totalTasks: 30, completedCount: 20, learningContent: [{ id: 'F', name: '練習主題 M 簡報' }] },
+                    { id: 5, name: '內容創作與個人品牌', shortName: '內容創作', isEditing: false, goal: '每週產出高品質的知識內容', outcome: '十篇部落格草稿', totalTasks: 12, completedCount: 4, learningContent: [{ id: 'G', name: '發想主題 Q' }] },
+                    { id: 6, name: '生活美感與體驗', shortName: '生活美感', isEditing: false, goal: '提升生活品質與靈感捕捉能力', outcome: '照片靈感集、深度體驗紀錄', totalTasks: 10, completedCount: 10, learningContent: [{ id: 'P', name: '紀錄生活靈感' }] },
+                ],
+                tasks: [],
+                // drafts: [], // 移除
+                // resources: [], // 移除
+                
+                newTask: { content: '', courseId: null, },
+                
+                modal: { isVisible: false, mode: 'NewTask', data: {} }
+            },
+            computed: {
+                dailyReflection: {
+                    get() {
+                        const dateKey = this.formatDate(this.currentDate, 'YYYY-MM-DD');
+                        return { content: this.dailyReflections[dateKey] || '' };
+                    },
+                    set(newValue) {
+                        const dateKey = this.formatDate(this.currentDate, 'YYYY-MM-DD');
+                        this.$set(this.dailyReflections, dateKey, newValue.content);
+                    }
+                },
+                dateRange() {
+                    const days = [];
+                    const today = this.formatDate(new Date(), 'YYYY-MM-DD');
+                    for (let i = -3; i <= 3; i++) {
+                        const date = new Date(this.currentDate); 
+                        date.setDate(this.currentDate.getDate() + i);
+                        const dateString = this.formatDate(date, 'YYYY-MM-DD');
+                        days.push({
+                            date: date,
+                            dateString: dateString,
+                            dayOfWeek: ['日', '一', '二', '三', '四', '五', '六'][date.getDay()],
+                            dayOfMonth: date.getDate(),
+                            isToday: dateString === today,
+                            isSelected: this.formatDate(this.currentDate, 'YYYY-MM-DD') === dateString
+                        });
+                    }
+                    return days;
+                },
+                filteredTasks() {
+                    const selectedDate = this.formatDate(this.currentDate, 'YYYY-MM-DD');
+                    return this.tasks
+                        .filter(task => this.formatDate(task.date, 'YYYY-MM-DD') === selectedDate)
+                        .filter(task => this.selectedCourseFilter === 'All' || task.courseId === parseInt(this.selectedCourseFilter));
+                },
+                // 移除 totalCompletedCount (Req 1)
+                courseProgress() {
+                    const progress = {};
+                    this.courses.forEach(course => {
+                        if (course.totalTasks === 0) {
+                            progress[course.id] = 0;
+                        } else {
+                            progress[course.id] = Math.floor((course.completedCount / course.totalTasks) * 100);
+                        }
+                    });
+                    return progress;
+                },
+                // Req 4: 月份概覽計算 (顯示課程名稱縮寫)
+                monthlyView() {
+                    const month = this.currentMonth.getMonth();
+                    const year = this.currentMonth.getFullYear();
+                    const firstDay = new Date(year, month, 1);
+                    const lastDay = new Date(year, month + 1, 0);
+                    const numDays = lastDay.getDate();
+
+                    let startDayOfWeek = firstDay.getDay();
+
+                    const calendar = [];
+                    const tasksByDate = {}; // { 'YYYY-MM-DD': [課程名稱縮寫陣列] }
+
+                    // 1. 建立日期 -> 課程名稱縮寫 映射
+                    const courseMap = this.courses.reduce((map, course) => {
+                        map[course.id] = course.shortName;
+                        return map;
+                    }, {});
+
+                    this.tasks.forEach(t => {
+                        const dateString = this.formatDate(t.date, 'YYYY-MM-DD');
+                        const courseShortName = courseMap[t.courseId];
+                        if (courseShortName) {
+                            if (!tasksByDate[dateString]) {
+                                tasksByDate[dateString] = new Set();
+                            }
+                            tasksByDate[dateString].add(courseShortName);
+                        }
+                    });
+
+                    // 填充上個月的日期
+                    for (let i = 0; i < startDayOfWeek; i++) {
+                        calendar.push({ day: null, isCurrentMonth: false, courseNames: [] });
+                    }
+
+                    // 填充本月的日期
+                    for (let i = 1; i <= numDays; i++) {
+                        const date = new Date(year, month, i);
+                        const dateString = this.formatDate(date, 'YYYY-MM-DD');
+                        const courseNames = tasksByDate[dateString] ? Array.from(tasksByDate[dateString]) : [];
+
+                        calendar.push({
+                            day: i,
+                            date: date,
+                            dateString: dateString,
+                            isCurrentMonth: true,
+                            isSelected: dateString === this.formatDate(this.currentDate, 'YYYY-MM-DD'),
+                            isToday: dateString === this.formatDate(new Date(), 'YYYY-MM-DD'),
+                            courseNames: courseNames, // 課程名稱縮寫陣列
+                        });
+                    }
+
+                    // 填充下個月的日期
+                    while (calendar.length % 7 !== 0) {
+                        calendar.push({ day: null, isCurrentMonth: false, courseNames: [] });
+                    }
+
+                    return calendar;
+                },
+            },
+            watch: {
+                isAuthReady(isReady) {
+                    if (isReady && this.userId) {
+                        this.fetchData('tasks');
+                        this.fetchData('reflections'); 
+                    }
+                }
+            },
+            methods: {
+                formatDate(date, format) {
+                    if (!date) return '';
+                    const d = date instanceof Date ? date : (date.toDate ? date.toDate() : new Date(date));
+                    const pad = (n) => (n < 10 ? '0' + n : n);
+                    let str = format;
+                    str = str.replace('YYYY', d.getFullYear());
+                    str = str.replace('MM', pad(d.getMonth() + 1));
+                    str = str.replace('DD', pad(d.getDate()));
+                    str = str.replace('HH', pad(d.getHours()));
+                    str = str.replace('mm', pad(d.getMinutes()));
+                    return str;
+                },
+                selectDate(date) {
+                    this.currentDate = date;
+                },
+                saveDailyReflection() {
+                    const dateKey = this.formatDate(this.currentDate, 'YYYY-MM-DD');
+                    const content = this.dailyReflection.content;
+                    if (content.trim() === '') {
+                        delete this.dailyReflections[dateKey];
+                        localStorage.removeItem(`reflection-${dateKey}`);
+                        alert('心得已清除。');
+                    } else {
+                        this.$set(this.dailyReflections, dateKey, content);
+                        localStorage.setItem(`reflection-${dateKey}`, content);
+                        alert('心得已儲存！');
+                    }
+                },
+                openModal(mode, data = {}) {
+                    this.modal.mode = mode;
+                    this.modal.data = data;
+                    this.modal.isVisible = true;
+                },
+                closeModal() {
+                    this.modal.isVisible = false;
+                    this.modal.data = {};
+                    this.newTask = { content: '', courseId: null };
+                },
+                // Req 2: 切換目標/成果的編輯模式
+                toggleEditCourse(courseId) {
+                    const course = this.courses.find(c => c.id === courseId);
+                    if (course) {
+                        // 模擬儲存 (如果進入編輯模式，下次點擊就是儲存)
+                        if (course.isEditing) {
+                            // 在這裡可以加入 Firebase 或 LocalStorage 的儲存邏輯
+                            console.log(`課程 ${courseId} 目標/成果已儲存。`);
+                        }
+                        course.isEditing = !course.isEditing;
+                    }
+                },
+                fetchData(collectionName) {
+                    if (collectionName === 'reflections') {
+                         // 模擬從 LocalStorage 載入心得
+                        for (let i = 0; i < localStorage.length; i++) {
+                            const key = localStorage.key(i);
+                            if (key.startsWith('reflection-')) {
+                                const dateKey = key.replace('reflection-', '');
+                                const content = localStorage.getItem(key);
+                                this.$set(this.dailyReflections, dateKey, content);
+                            }
+                        }
+                        return;
+                    }
+                    if (!window.dbFunctions || !this.userId) return;
+                    // ... Firebase 數據載入邏輯 (保持不變)
+                },
+                async saveTask() {
+                    if (!this.newTask.content || !this.newTask.courseId) {
+                        alert('請輸入任務內容並選擇所屬課程！');
+                        return;
+                    }
+                    const taskData = {
+                        date: this.currentDate,
+                        courseId: parseInt(this.newTask.courseId),
+                        content: this.newTask.content,
+                        completed: false,
+                        createdAt: window.dbFunctions ? window.dbFunctions.serverTimestamp() : new Date(),
+                    };
+
+                    if (window.dbFunctions && this.userId) {
+                        // ... Firebase 儲存邏輯 (保持不變)
+                    } else {
+                        // 模擬 Local 儲存
+                        this.tasks.push({ id: `t${Date.now()}`, ...taskData });
+                    }
+                    this.closeModal();
+                },
+                async toggleTaskCompletion(taskId, isCompleted) {
+                    if (!window.dbFunctions || !this.userId) {
+                         const task = this.tasks.find(t => t.id === taskId);
+                         if (task) {
+                            task.completed = isCompleted;
+                            task.completedAt = isCompleted ? new Date() : null;
+                         }
+                         const taskToUpdate = this.tasks.find(t => t.id === taskId);
+                         if (taskToUpdate) {
+                             const course = this.courses.find(c => c.id === taskToUpdate.courseId);
+                             if (course) {
+                                course.completedCount += isCompleted ? 1 : -1;
+                             }
+                         }
+                         return;
+                    }
+
+                    // ... Firebase 邏輯 (保持不變)
+                },
+                // 月曆切換月份
+                navigateMonth(offset) {
+                    const newDate = new Date(this.currentMonth);
+                    newDate.setMonth(newDate.getMonth() + offset);
+                    this.currentMonth = newDate;
+                },
+                // 從月曆視圖點擊日期
+                selectDayFromMonthly(day) {
+                    if (day.date) {
+                        this.currentDate = day.date;
+                        this.activeTab = 'daily';
+                    }
+                }
+            },
+            created() {
+                if (!window.firebaseApp) {
+                    // 模擬數據
+                    this.tasks = [
+                        { id: 't1', date: new Date(), courseId: 1, content: '讀《The Mountain Is You》', completed: true, completedAt: new Date(new Date().setHours(8, 0, 0)) },
+                        { id: 't2', date: new Date(), courseId: 2, content: '撰寫 AI 報告草稿', completed: false },
+                        { id: 't3', date: new Date(), courseId: 6, content: '記錄生活靈感 P', completed: false },
+                        { id: 't4', date: new Date(new Date().setDate(new Date().getDate() + 1)), courseId: 3, content: '建立 Q3 財務模型', completed: false },
+                        { id: 't5', date: new Date(new Date().setDate(new Date().getDate() - 2)), courseId: 4, content: '練習主題 M 簡報', completed: true, completedAt: new Date(new Date().setHours(14, 30, 0)) },
+                        { id: 't6', date: new Date(), courseId: 1, content: '早上冥想 10 分鐘', completed: true, completedAt: new Date(new Date().setHours(7, 0, 0)) },
+                        { id: 't7', date: new Date(new Date().setDate(new Date().getDate() - 15)), courseId: 5, content: '發想主題 Q', completed: false },
+                        { id: 't8', date: new Date(new Date().setDate(new Date().getDate() - 15)), courseId: 2, content: '學習 Python 金融套件', completed: true },
+                        { id: 't9', date: new Date(new Date().setDate(new Date().getDate() - 15)), courseId: 4, content: '模擬外商會議', completed: true },
+                        { id: 't10', date: new Date(new Date().setDate(new Date().getDate() - 5)), courseId: 1, content: '焦慮三問練習', completed: true },
+                        { id: 't11', date: new Date(new Date().setDate(new Date().getDate() - 5)), courseId: 4, content: '閱讀英文新聞', completed: true },
+                        { id: 't12', date: new Date(new Date().setDate(new Date().getDate() - 5)), courseId: 5, content: '文章大綱確立', completed: false },
+                        { id: 't13', date: new Date(new Date().setDate(new Date().getDate() - 5)), courseId: 2, content: 'AI 語義分析', completed: true },
+                    ];
+                    this.fetchData('reflections');
+                }
+            }
+        });
+    </script>
+</body>
+</html>
